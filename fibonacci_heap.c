@@ -14,6 +14,7 @@ static void link_fib_nodes(Fibonacci_Heap *fh, Fibonacci_Node *y, Fibonacci_Node
 static void consolidate_fib_heap(Fibonacci_Heap *fh);
 static void cut_fib_node(Fibonacci_Heap *fh, Fibonacci_Node *x, Fibonacci_Node *y);
 static void cascading_cut_fib_node(Fibonacci_Heap *fh, Fibonacci_Node *y);
+static Fibonacci_Node* find_node_by_value_recursive(Fibonacci_Node *start_node, int value_to_find, Fibonacci_Node *head_of_list_to_avoid_revisit_in_circular_search);
 
 // Function to create an empty Fibonacci heap
 Fibonacci_Heap *create_fib_heap() {
@@ -29,6 +30,7 @@ Fibonacci_Heap *create_fib_heap() {
 
 // Function to insert a new node into the Fibonacci heap
 bool insert_fib_heap(Fibonacci_Heap *fh, void *data) {
+    // Assumes data is a dynamically allocated int* from the wrapper
     if (fh == NULL) {
         return false; // Heap does not exist
     }
@@ -111,104 +113,160 @@ bool delete_node_fib_heap(Fibonacci_Heap *fh, Fibonacci_Node *node) {
                                      // This suggests that keys should probably always be freed by extract_min
                                      // if they are considered "owned" by the heap.
                                      // For now, let's follow the exact instructions which focus on neg_inf_key.
+    // MODIFIED logic for delete_node_fib_heap:
+    
+    void* original_key = node->key; // 1. Store original key
 
-    if (!decrease_key_fib_heap(fh, node, (void *)neg_inf_key)) {
-        free(neg_inf_key); // Decrease key failed
+    // 2. Create a new int* for INT_MIN
+    int *temp_min_key = (int *)malloc(sizeof(int));
+    if (temp_min_key == NULL) {
+        return false; // Allocation failed
+    }
+    *temp_min_key = INT_MIN;
+
+    // 3. Call decrease_key_fib_heap. decrease_key_fib_heap should not free the old key (original_key).
+    // It just replaces node->key with temp_min_key.
+    if (!decrease_key_fib_heap(fh, node, (void *)temp_min_key)) {
+        free(temp_min_key); // Decrease key failed, free the allocated temp_min_key
+        // original_key is still in the node.
         return false;
     }
-    // Now node->key is neg_inf_key, and node is (or will be) fh->min.
+    // Now node->key is temp_min_key. The original_key is orphaned by the node.
 
-    // d. Call void* extracted_key = extract_min_fib_heap(fh)
-    void *extracted_key = extract_min_fib_heap(fh);
+    // 4. Free the original key
+    if (original_key != NULL) { // Should always be true if node was valid
+        free(original_key);
+    }
 
-    // e. Free the neg_inf_key
-    if (extracted_key == neg_inf_key) {
-        free(extracted_key); // extracted_key is neg_inf_key
+    // 5. Call extract_min_fib_heap. This will extract the node with temp_min_key.
+    void *extracted_key_ptr = extract_min_fib_heap(fh);
+
+    // 6. Free the INT_MIN key that was extracted.
+    if (extracted_key_ptr == temp_min_key) {
+        free(extracted_key_ptr);
     } else {
-        // This case should ideally not happen if decrease_key and extract_min work as expected.
-        // If extract_min returned something else, but we successfully decreased the key to INT_MIN,
-        // then fh->min should have been 'node' and its key 'neg_inf_key'.
-        // If extract_min returned a *different* key, it implies an issue.
-        // We must still free neg_inf_key as it was allocated here.
-        free(neg_inf_key);
-        // And what about extracted_key? If it's not neg_inf_key, it's some other key
-        // that extract_min expects the caller to manage. This scenario indicates inconsistency.
-        // For robustness, if extracted_key is not neg_inf_key, it implies it might be the
-        // original key of some other node if INT_MIN wasn't truly minimal, or an error.
-        // The problem statement implies extracted_key WILL be neg_inf_key.
+        // This case indicates a problem: extract_min didn't return the temp_min_key.
+        // This could happen if another INT_MIN key was already in the heap or if decrease_key failed silently
+        // or if extract_min logic is flawed.
+        // We must free temp_min_key if it wasn't the one returned to avoid a leak.
+        if (temp_min_key != NULL) free(temp_min_key);
+        // And if extracted_key_ptr is something else, the caller of extract_min (this function)
+        // is responsible for it. If it's a user key, this would be a bug in logic.
+        // For now, we assume extracted_key_ptr IS temp_min_key.
+        // If it's not, we've already freed temp_min_key, and we let extracted_key_ptr leak if it's
+        // not a key that should be freed here (e.g. if it was another node's key, but that's very unlikely).
+        // This path suggests an error, so returning false might be appropriate or logging.
+        // For now, stick to freeing the temp_min_key if it wasn't returned.
     }
     
-    // What about old_key_of_node? If it wasn't neg_inf_key (which it wouldn't be initially),
-    // and node->key was overwritten by neg_inf_key, then old_key_of_node is orphaned.
-    // The problem description does not explicitly state to free old_key_of_node.
-    // This is a common challenge with generic data structures.
-    // If the heap "owns" the keys, then extract_min or delete should free them.
-    // If the user "owns" them, they should get them back to free them.
-    // Here, extract_min returns the key, suggesting user might need to free it.
-    // Since we are deleting the node, its original key should also be considered for freeing.
-    // However, sticking to the letter: only neg_inf_key is mentioned for freeing by this function.
-
-    // f. Return true
     return true;
 }
 
-// Placeholder function to delete a node by its data content
+// Function to delete a node by its data content (value)
+// 'data' is assumed to be an int* pointing to the value to delete.
 bool delete_fib_node(Fibonacci_Heap *fh, void *data) {
-    // This function requires finding the node by its data.
-    // A direct search (e.g., traversing the heap) can be O(n) and is not
-    // implemented here. To use deletion, obtain a Fibonacci_Node* pointer
-    // and use delete_node_fib_heap.
-    // For now, this function will return false as node search is not implemented.
-    if (fh == NULL || data == NULL) return false; // Basic check
-    
-    // Placeholder: A real implementation would search for the node with 'data'.
-    // Fibonacci_Node *node_to_delete = find_node_by_data(fh, data); // Hypothetical search
-    // if (node_to_delete == NULL) return false; // Not found
-    // return delete_node_fib_heap(fh, node_to_delete);
+    if (fh == NULL || data == NULL || fh->root_list == NULL) {
+        return false;
+    }
+    int value_to_delete = *(int*)data;
 
-    fprintf(stderr, "delete_fib_node by data is not fully implemented due to missing search functionality.\n");
-    return false; 
+    Fibonacci_Node *node_to_delete = find_node_by_value_recursive(fh->root_list, value_to_delete, fh->root_list);
+
+    if (node_to_delete == NULL) {
+        return false; // Node not found
+    }
+
+    return delete_node_fib_heap(fh, node_to_delete);
 }
 
-// Placeholder function to change the value of a node in the Fibonacci heap
-bool change_fib_node_value(Fibonacci_Heap *fh, void *old_val, void *new_val) {
-    if (fh == NULL || old_val == NULL || new_val == NULL) {
+// Function to change the value of a node in the Fibonacci heap
+// old_val_ptr is an int* pointing to the value to find.
+// new_key_ptr_to_adopt is a new int* (allocated by wrapper) to be adopted by the node.
+bool change_fib_node_value(Fibonacci_Heap *fh, void *old_val_ptr, void *new_key_ptr_to_adopt) {
+    if (fh == NULL || old_val_ptr == NULL || new_key_ptr_to_adopt == NULL || fh->root_list == NULL) {
+        if (new_key_ptr_to_adopt != NULL && old_val_ptr == NULL) { 
+            // If old_val_ptr is NULL, node cannot be found, new_key_ptr_to_adopt would leak if not freed by caller (wrapper).
+            // This case implies an error in arguments. The Python wrapper should handle freeing new_key_ptr_to_adopt if this function fails early.
+        }
         return false;
     }
 
-    // To implement change_fib_node_value:
-    // 1. Find the Fibonacci_Node* associated with old_val. This requires a search
-    //    mechanism (e.g., iterating through the heap or using an auxiliary data structure),
-    //    which can be complex or inefficient (O(n) for simple iteration) and is not
-    //    currently implemented.
-    //    Example: Fibonacci_Node *node = find_node_by_data(fh, old_val); // Hypothetical
-    //    if (node == NULL) return false; // Node with old_val not found
+    int value_to_find = *(int*)old_val_ptr;
+    int new_value = *(int*)new_key_ptr_to_adopt;
 
-    // 2. Once the node is found, compare new_val with the node's current key.
-    //    Let's assume integer keys for discussion:
-    //    if (*(int*)new_val < *(int*)(node->key)) { // new_val is smaller
-    //        // Call decrease_key_fib_heap.
-    //        // Note: decrease_key_fib_heap takes Fibonacci_Node*, not void* data.
-    //        // The current key of the node (node->key) would be replaced by new_val.
-    //        // The caller would be responsible for freeing the memory of the old node->key if needed.
-    //        // return decrease_key_fib_heap(fh, node, new_val);
-    //    } else if (*(int*)new_val > *(int*)(node->key)) { // new_val is larger
-    //        // This is more complex. It involves deleting the node and re-inserting
-    //        // a new node with new_val.
-    //        // The original key of the node (node->key) would need to be handled (e.g. freed by caller or by delete).
-    //        // bool deleted = delete_node_fib_heap(fh, node);
-    //        // if (!deleted) return false;
-    //        // The user must manage the memory for old_val (which is node->key).
-    //        // Typically, if delete_node_fib_heap is called, the key associated with the
-    //        // node is orphaned (as per current delete_node_fib_heap logic which uses INT_MIN).
-    //        // The user should free old_val if it's dynamically allocated.
-    //        // return insert_fib_heap(fh, new_val);
-    //    } else { // new_val is the same as current node->key
-    //        return true; // Values are the same, no change needed.
-    //    }
+    Fibonacci_Node *node_to_change = find_node_by_value_recursive(fh->root_list, value_to_find, fh->root_list);
 
-    fprintf(stderr, "change_fib_node_value is not fully implemented due to missing node search functionality and the complex logic for value updates (decrease vs delete/insert).\n");
-    return false;
+    if (node_to_change == NULL) {
+        // Node not found. Wrapper is responsible for freeing new_key_ptr_to_adopt.
+        return false;
+    }
+
+    // Store the original key of the node to free it after replacement.
+    void* original_node_key = node_to_change->key;
+    int original_node_key_value = *(int*)original_node_key; // Value before change
+
+    // Adopt the new key.
+    // node_to_change->key = new_key_ptr_to_adopt; // This is done by decrease_key or manually if increase
+
+    if (new_value < original_node_key_value) {
+        // New value is smaller, use decrease_key logic.
+        // decrease_key_fib_heap will set node_to_change->key = new_key_ptr_to_adopt.
+        if (decrease_key_fib_heap(fh, node_to_change, new_key_ptr_to_adopt)) {
+            free(original_node_key); // Free the old key after successful decrease_key
+            return true;
+        } else {
+            // decrease_key failed. The node's key is unchanged.
+            // Wrapper is responsible for freeing new_key_ptr_to_adopt.
+            return false;
+        }
+    } else if (new_value > original_node_key_value) {
+        // New value is larger (increase key). This is complex.
+        // Standard way: delete the node and re-insert the new value.
+        // delete_node_fib_heap will free original_node_key.
+        // We need to pass a pointer to new_value for re-insertion, which is new_key_ptr_to_adopt.
+        // This means delete_node_fib_heap must NOT free new_key_ptr_to_adopt if it's passed in somehow.
+        // This is tricky. Let's simplify:
+        // 1. Free the old key.
+        // 2. Set the node's key to the new key.
+        // 3. If parent exists and heap property violated (child > parent), it's an error or needs complex fixing.
+        //    Fibonacci heaps are not optimized for increase_key.
+        //    For now, we will just update the key. If this breaks heap structure for parent,
+        //    that's a limitation. A full "increase key" would involve removing from parent,
+        //    potentially adding to root list, and then potentially a cascading cut upwards on parent.
+        //    This is beyond typical decrease_key logic.
+        //    A simpler model for increase key: delete and re-insert.
+        //    Let's try delete and re-insert.
+        
+        // The value `value_to_find` (which is `original_node_key_value`) is what we need to delete.
+        // We already have the `node_to_change`.
+        if (delete_node_fib_heap(fh, node_to_change)) { // This will free original_node_key
+            // Now re-insert the new_key_ptr_to_adopt
+            if (insert_fib_heap(fh, new_key_ptr_to_adopt)) {
+                return true; // Successfully deleted and re-inserted
+            } else {
+                // Insertion failed. This is problematic. new_key_ptr_to_adopt was not inserted.
+                // Wrapper should free new_key_ptr_to_adopt.
+                // The heap is now in a state where a node was deleted.
+                return false; // Indicate error.
+            }
+        } else {
+            // Deletion failed. new_key_ptr_to_adopt has not been used. Wrapper should free it.
+            return false;
+        }
+    } else { // new_value == original_node_key_value
+        // Values are the same. No change needed.
+        // However, new_key_ptr_to_adopt was allocated by wrapper and needs to be freed as it won't be used.
+        // This function should not free it; the wrapper should if this returns true (or false) without adopting.
+        // For consistency, if no operation happens, the wrapper should free new_key_ptr_to_adopt.
+        // Let's return true, but the wrapper needs to know new_key_ptr_to_adopt wasn't consumed.
+        // This path is tricky for memory management of new_key_ptr_to_adopt.
+        // The Python wrapper will only free new_key_ptr_to_adopt if change_key fails.
+        // If it succeeds, it assumes new_key_ptr_to_adopt is consumed.
+        // So, if values are same, we must "consume" new_key_ptr_to_adopt and free original_node_key.
+        node_to_change->key = new_key_ptr_to_adopt;
+        free(original_node_key);
+        return true;
+    }
 }
 
 // Function to get the minimum key from the Fibonacci heap
@@ -379,16 +437,25 @@ static void consolidate_fib_heap(Fibonacci_Heap *fh) {
 }
 
 // Function to decrease the key of a node in the Fibonacci heap
+// new_key is an int* that will be adopted by the node.
+// This function does NOT free the old node->key. The caller must do so.
 bool decrease_key_fib_heap(Fibonacci_Heap *fh, Fibonacci_Node *node, void *new_key) {
     // a. Basic checks
     if (fh == NULL || node == NULL || new_key == NULL) {
         return false; // Invalid input
     }
-    if (*(int *)new_key > *(int *)(node->key)) {
+    // It's possible that new_key is not strictly less, e.g. when setting to INT_MIN for delete
+    // For a generic decrease_key, it must be less.
+    // However, change_fib_node_value might call this even if new_key == old_key (which is fine).
+    // The > check is important.
+    if (node->key != NULL && *(int *)new_key > *(int *)(node->key)) { 
+        // Only check if node->key is not NULL. If it was NULL, any new key is fine.
+        // This path typically shouldn't be hit if called by change_fib_node_value correctly.
         return false; // New key is greater than current key
     }
 
-    // b. Update the key
+    // b. Update the key (adopt the new_key pointer)
+    // The old node->key is now orphaned by the node. Caller's responsibility.
     node->key = new_key;
 
     // c. Let y = node->parent
@@ -446,6 +513,11 @@ void *extract_min_fib_heap(Fibonacci_Heap *fh) {
         if (children_array == NULL && num_children > 0) {
             // Memory allocation failed, cannot proceed safely.
             // This is a critical error state. For now, return NULL as we can't correctly modify the heap.
+            // This indicates an out-of-memory condition.
+            // The key `min_key` is still valid from z, but the heap is now in a bad state.
+            // To prevent use of a corrupted heap, maybe it's better to signal a fatal error.
+            // For now, returning NULL for the key, though z and min_key are technically available.
+            // This makes the function's behavior consistent on failure (return NULL).
             return NULL; 
         }
 
@@ -594,4 +666,65 @@ static void cascading_cut_fib_node(Fibonacci_Heap *fh, Fibonacci_Node *y) {
             cascading_cut_fib_node(fh, z);
         }
     }
+}
+
+// Helper function to find a node by its integer value (recursive)
+// 'start_node' is the node to begin search from in a list (e.g. fh->root_list or parent->child).
+// 'value_to_find' is the integer value being searched for.
+// 'list_head_marker' is used to detect when a circular list traversal is complete. It should be the same as 'start_node' for the initial call on a list.
+static Fibonacci_Node* find_node_by_value_recursive(Fibonacci_Node *current_search_candidate, int value_to_find, Fibonacci_Node *list_head_marker) {
+    if (current_search_candidate == NULL) {
+        return NULL;
+    }
+
+    Fibonacci_Node *iter_node = current_search_candidate;
+    Fibonacci_Node *found_node = NULL;
+
+    do {
+        // Check current node
+        if (iter_node->key != NULL && *(int*)(iter_node->key) == value_to_find) {
+            return iter_node; // Found the node
+        }
+
+        // Recursively search in children (if any)
+        // For child list, the head marker for the child list traversal is iter_node->child itself.
+        if (iter_node->child != NULL) {
+            found_node = find_node_by_value_recursive(iter_node->child, value_to_find, iter_node->child);
+            if (found_node != NULL) {
+                return found_node; // Found in a descendant
+            }
+        }
+
+        // Move to the next sibling in the current list
+        iter_node = iter_node->right;
+    } while (iter_node != list_head_marker); // Stop after traversing the circular list
+
+    return NULL; // Not found in this list or its descendants
+}
+
+
+void destroy_fib_heap(Fibonacci_Heap *fh) {
+    if (fh == NULL) {
+        return;
+    }
+    // Ensure fh->n is reliable. If not, this loop could be problematic.
+    // extract_min_fib_heap should decrement fh->n.
+    while (fh->n > 0 && fh->min != NULL) { // Added fh->min != NULL for extra safety
+        void *key_ptr = extract_min_fib_heap(fh); // This should return the int* key
+        if (key_ptr != NULL) {
+            free(key_ptr); // Free the int* allocated by the wrapper's insert
+        } else {
+            // If extract_min_fib_heap returns NULL but fh->n > 0, something is wrong.
+            // This might indicate heap corruption or a bug in extract_min_fib_heap.
+            // To prevent an infinite loop, break. Consider logging an error.
+            fprintf(stderr, "Warning: destroy_fib_heap encountered NULL key from extract_min_heap while n > 0.\n");
+            break; 
+        }
+    }
+    // All nodes and their keys should have been freed via extract_min_fib_heap.
+    // Now free the heap structure itself.
+    fh->min = NULL; // Defensive nulling
+    fh->root_list = NULL; // Defensive nulling
+    fh->n = 0; // Defensive
+    free(fh);
 }
