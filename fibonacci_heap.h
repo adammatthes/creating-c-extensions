@@ -32,4 +32,10 @@ bool change_fib_node_value(Fibonacci_Heap *fh, void *old_val, void *new_val);
 
 void *get_min(Fibonacci_Heap *fh);
 
+void *extract_min_fib_heap(Fibonacci_Heap *fh);
+
+bool decrease_key_fib_heap(Fibonacci_Heap *fh, Fibonacci_Node *node, void *new_key);
+
+bool delete_node_fib_heap(Fibonacci_Heap *fh, Fibonacci_Node *node);
+
 #endif // FIBONACCI_HEAP_H
